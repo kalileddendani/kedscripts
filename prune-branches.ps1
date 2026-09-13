@@ -11,6 +11,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $currentBranch = git branch --show-current
+$worktreePaths = @{}
+$worktreePath = $null
+foreach ($line in git worktree list --porcelain) {
+    if ($line -match '^worktree (.+)$') {
+        $worktreePath = $Matches[1]
+    }
+    elseif ($line -match '^branch refs/heads/(.+)$' -and $worktreePath) {
+        $worktreePaths[$Matches[1]] = $worktreePath
+    }
+}
 $remoteBranches = @(git for-each-ref --format='%(refname:short)' refs/remotes/origin |
     Where-Object { $_ -ne 'origin/HEAD' } |
     ForEach-Object { $_ -replace '^origin/', '' })
@@ -25,7 +35,10 @@ $goneBranches = @(git for-each-ref --format='%(refname:short) %(upstream:track)'
             $branch
         }
     } |
-    Where-Object { $_ -and $_ -ne $currentBranch })
+    Where-Object {
+        $_ -and
+        $_ -ne $currentBranch
+    })
 
 if ($goneBranches) {
     Write-Host "Local branches that are not present on origin:" -ForegroundColor Yellow
@@ -36,22 +49,38 @@ if ($goneBranches) {
     $deletedBranches = @()
 
     foreach ($branch in $goneBranches) {
-        if (-not $deleteAll) {
-            do {
-                $choice = (Read-Host "Delete local branch '$branch'? [y/n/a/q]").Trim().ToLowerInvariant()
-            } while ($choice -notin @('y', 'n', 'a', 'q', ''))
+        if (-not $deleteAll -or $worktreePaths[$branch]) {
+            $worktreePath = $worktreePaths[$branch]
+            if ($worktreePath) {
+                Write-Host "Branch '$branch' is used by worktree '$worktreePath'." -ForegroundColor Yellow
+                $choice = (Read-Host "Remove the worktree and delete the branch, including local changes? [y/n]").Trim().ToLowerInvariant()
+                if ($choice -notin @('y', 'yes')) {
+                    continue
+                }
 
-            if ($choice -eq 'q') {
-                Write-Host "Cleanup cancelled." -ForegroundColor Yellow
-                break
+                git worktree remove --force -- $worktreePath
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "Could not remove worktree '$worktreePath'." -ForegroundColor Red
+                    continue
+                }
             }
+            else {
+                do {
+                    $choice = (Read-Host "Delete local branch '$branch'? [y/n/a/q]").Trim().ToLowerInvariant()
+                } while ($choice -notin @('y', 'n', 'a', 'q', ''))
 
-            if ($choice -eq 'a') {
-                $deleteAll = $true
-            }
+                if ($choice -eq 'q') {
+                    Write-Host "Cleanup cancelled." -ForegroundColor Yellow
+                    break
+                }
 
-            if ($choice -ne 'y' -and $choice -ne 'a') {
-                continue
+                if ($choice -eq 'a') {
+                    $deleteAll = $true
+                }
+
+                if ($choice -ne 'y' -and $choice -ne 'a') {
+                    continue
+                }
             }
         }
 
