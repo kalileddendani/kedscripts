@@ -28,14 +28,42 @@ $goneBranches = @(git for-each-ref --format='%(refname:short) %(upstream:track)'
     Where-Object { $_ -and $_ -ne $currentBranch })
 
 if ($goneBranches) {
-    Write-Host "Local branches to delete:" -ForegroundColor Yellow
+    Write-Host "Local branches that are not present on origin:" -ForegroundColor Yellow
     $goneBranches | ForEach-Object { Write-Host " - $_" -ForegroundColor Yellow }
 
-    Write-Host "Deleting local branches..." -ForegroundColor Cyan
+    Write-Host "`nChoose for each branch: [y]es, [n]o, [a]ll remaining, [q]uit." -ForegroundColor Cyan
+    $deleteAll = $false
+    $deletedBranches = @()
+
     foreach ($branch in $goneBranches) {
-        git branch -D $branch
+        if (-not $deleteAll) {
+            do {
+                $choice = (Read-Host "Delete local branch '$branch'? [y/n/a/q]").Trim().ToLowerInvariant()
+            } while ($choice -notin @('y', 'n', 'a', 'q', ''))
+
+            if ($choice -eq 'q') {
+                Write-Host "Cleanup cancelled." -ForegroundColor Yellow
+                break
+            }
+
+            if ($choice -eq 'a') {
+                $deleteAll = $true
+            }
+
+            if ($choice -ne 'y' -and $choice -ne 'a') {
+                continue
+            }
+        }
+
+        git branch -D -- $branch
+        if ($LASTEXITCODE -eq 0) {
+            $deletedBranches += $branch
+        }
     }
-    Write-Host "Local branch cleanup completed." -ForegroundColor Green
+
+    if ($deletedBranches.Count -gt 0) {
+        Write-Host "Deleted local branches: $($deletedBranches -join ', ')" -ForegroundColor Green
+    }
 }
 else {
     Write-Host "No local branches to delete." -ForegroundColor Green
